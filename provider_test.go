@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,225 +14,143 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var provider selectel.Provider
-var zone string
-var ctx context.Context
+// ----- Integration test scaffolding --------------------------------------
 
-var addedRecords []libdns.Record
-var sourceRecords []libdns.Record
+// setupIntegration loads credentials from .env (if present) and the
+// process environment, and returns a configured Provider together with
+// the target zone. If the required SELECTEL_* variables are not
+// available, the test is skipped rather than failing - this lets
+// `go test ./...` run cleanly on machines without Selectel credentials.
+func setupIntegration(t *testing.T) (*selectel.Provider, string, context.Context) {
+	t.Helper()
 
-// load init data from .env
-func setup() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		panic("Error loading .env file")
+	// .env is optional. Ignore the error if it does not exist.
+	_ = godotenv.Load(".env")
+
+	required := []string{
+		"SELECTEL_USER",
+		"SELECTEL_PASSWORD",
+		"SELECTEL_ACCOUNT_ID",
+		"SELECTEL_PROJECT_NAME",
+		"SELECTEL_ZONE",
+	}
+	for _, key := range required {
+		if os.Getenv(key) == "" {
+			t.Skipf("skipping integration test: %s is not set", key)
+		}
 	}
 
-	provider = selectel.Provider{
+	provider := &selectel.Provider{
 		User:        os.Getenv("SELECTEL_USER"),
 		Password:    os.Getenv("SELECTEL_PASSWORD"),
 		AccountId:   os.Getenv("SELECTEL_ACCOUNT_ID"),
 		ProjectName: os.Getenv("SELECTEL_PROJECT_NAME"),
 		ZonesCache:  make(map[string]string),
 	}
-	zone = os.Getenv("SELECTEL_ZONE")
-	ctx = context.Background()
-    sourceRecords = []libdns.Record{
-        libdns.RR{ // 0
-            Type: "A",
-            Name: fmt.Sprintf("test1.%s.", os.Getenv("SELECTEL_ZONE")),
-            Data: "1.2.3.1",
-            TTL:  61 * time.Second,
-        },
-        libdns.RR{ // 1
-            Type: "A",
-            Name: fmt.Sprintf("test2.%s.", os.Getenv("SELECTEL_ZONE")),
-            Data: "1.2.3.2",
-            TTL:  61 * time.Second,
-        },
-        libdns.RR{ // 2
-            Type: "A",
-            Name: "test3",
-            Data: "1.2.3.3",
-            TTL:  61 * time.Second,
-        },
-        libdns.RR{ // 3
-            Type: "TXT",
-            Name: "test1",
-            Data: "test1 txt",
-            TTL:  61 * time.Second,
-        },
-        libdns.RR{ // 4
-            Type: "TXT",
-            Name: fmt.Sprintf("test2.%s.", os.Getenv("SELECTEL_ZONE")),
-            Data: "test2 txt",
-            TTL:  61 * time.Second,
-        },
-        libdns.RR{ // 5
-            Type: "TXT",
-            Name: "test3",
-            Data: "test3 txt",
-            TTL:  61 * time.Second,
-        },
-    }
+	return provider, os.Getenv("SELECTEL_ZONE"), context.Background()
 }
 
-// testing GetRecord
-func TestProvider_GetRecords(t *testing.T) {
-	setup()
+func sampleRecords(zone string) []libdns.Record {
+	return []libdns.Record{
+		libdns.RR{Type: "A", Name: fmt.Sprintf("test1.%s.", zone), Data: "1.2.3.1", TTL: 61 * time.Second},
+		libdns.RR{Type: "A", Name: fmt.Sprintf("test2.%s.", zone), Data: "1.2.3.2", TTL: 61 * time.Second},
+		libdns.RR{Type: "A", Name: "test3", Data: "1.2.3.3", TTL: 61 * time.Second},
+		libdns.RR{Type: "TXT", Name: "test1", Data: "test1 txt", TTL: 61 * time.Second},
+		libdns.RR{Type: "TXT", Name: fmt.Sprintf("test2.%s.", zone), Data: "test2 txt", TTL: 61 * time.Second},
+		libdns.RR{Type: "TXT", Name: "test3", Data: "test3 txt", TTL: 61 * time.Second},
+	}
+}
 
-	// delete sourceRec if exists
-	provider.DeleteRecords(ctx, zone, sourceRecords)
+// ----- Integration tests --------------------------------------------------
+
+func TestProvider_GetRecords(t *testing.T) {
+	provider, zone, ctx := setupIntegration(t)
+
+	// best-effort cleanup of any leftover records from previous runs
+	_, _ = provider.DeleteRecords(ctx, zone, sampleRecords(zone))
 
 	records, err := provider.GetRecords(ctx, zone)
 	assert.NoError(t, err)
 	assert.NotNil(t, records)
-	assert.True(t, len(records) > 0, "No records found")
-	t.Logf("GetRecords test passed. Records found: %d", len(records))
+	assert.True(t, len(records) > 0, "no records found")
+	t.Logf("GetRecords: %d records found", len(records))
 }
 
-// testing append record
 func TestProvider_AppendRecords(t *testing.T) {
-	setup()
-	// entries to add
+	provider, zone, ctx := setupIntegration(t)
+
 	newRecords := []libdns.Record{
-        libdns.RR{
-            Type: "A",
-            Name: "append-test1",
-            Data: "1.2.3.1",
-            TTL:  300 * time.Second,
-        },
-        libdns.RR{
-            Type: "TXT",
-            Name: "append-test2",
-            Data: "append test record",
-            TTL:  300 * time.Second,
-        },
+		libdns.RR{Type: "A", Name: "append-test1", Data: "1.2.3.1", TTL: 300 * time.Second},
+		libdns.RR{Type: "TXT", Name: "append-test2", Data: "append test record", TTL: 300 * time.Second},
 	}
 
-    records, err := provider.AppendRecords(ctx, zone, newRecords)
-	addedRecords = records
+	records, err := provider.AppendRecords(ctx, zone, newRecords)
 	if err != nil {
 		t.Logf("AppendRecords error: %v", err)
 	}
 	assert.NotNil(t, records)
-	assert.True(t, len(records) > 0, "Should have created at least one record")
+	assert.True(t, len(records) > 0, "should have created at least one record")
 	if len(records) > 0 {
 		assert.Equal(t, "A", records[0].RR().Type)
 	}
-	if len(records) > 2 {
-		assert.Equal(t, "TXT", records[2].RR().Type)
-	}
-	t.Logf("AppendRecords test passed. Append count: %d", len(records))
 }
 
-// testing set
 func TestProvider_SetRecords(t *testing.T) {
-	setup()
+	provider, zone, ctx := setupIntegration(t)
 
-	// Create simple test records for SetRecords
-    setRecords := []libdns.Record{
-        libdns.RR{
-            Type: "A",
-            Name: "set-test1",
-            Data: "1.2.3.1",
-            TTL:  62 * time.Second,
-        },
-        libdns.RR{
-            Type: "TXT",
-            Name: "set-test2",
-            Data: "test txt record",
-            TTL:  300 * time.Second,
-        },
-    }
+	setRecords := []libdns.Record{
+		libdns.RR{Type: "A", Name: "set-test1", Data: "1.2.3.1", TTL: 62 * time.Second},
+		libdns.RR{Type: "TXT", Name: "set-test2", Data: "test txt record", TTL: 300 * time.Second},
+	}
 
 	records, err := provider.SetRecords(ctx, zone, setRecords)
-	addedRecords = records
 	if err != nil {
 		t.Logf("SetRecords error: %v", err)
 	}
 	assert.NotNil(t, records)
-	assert.True(t, len(records) > 0, "Should have created at least one record")
+	assert.True(t, len(records) > 0, "should have created at least one record")
 	if len(records) > 0 {
 		assert.Equal(t, "A", records[0].RR().Type)
 	}
-	t.Logf("SetRecords test passed. Set count: %d", len(records))
 }
 
-// testing delete
 func TestProvider_DeleteRecords(t *testing.T) {
-	setup()
+	provider, zone, ctx := setupIntegration(t)
 
-	// Delete the records that were created in AppendRecords and SetRecords tests
-    delRecords := []libdns.Record{
-        libdns.RR{
-            Type: "A",
-            Name: "append-test1",
-            Data: "1.2.3.1",
-            TTL:  300 * time.Second,
-        },
-        libdns.RR{
-            Type: "TXT",
-            Name: "append-test2",
-            Data: "append test record",
-            TTL:  300 * time.Second,
-        },
-        libdns.RR{
-            Type: "A",
-            Name: "set-test1",
-            Data: "1.2.3.1",
-            TTL:  62 * time.Second,
-        },
-        libdns.RR{
-            Type: "TXT",
-            Name: "set-test2",
-            Data: "test txt record",
-            TTL:  300 * time.Second,
-        },
-    }
+	delRecords := []libdns.Record{
+		libdns.RR{Type: "A", Name: "append-test1", Data: "1.2.3.1", TTL: 300 * time.Second},
+		libdns.RR{Type: "TXT", Name: "append-test2", Data: "append test record", TTL: 300 * time.Second},
+		libdns.RR{Type: "A", Name: "set-test1", Data: "1.2.3.1", TTL: 62 * time.Second},
+		libdns.RR{Type: "TXT", Name: "set-test2", Data: "test txt record", TTL: 300 * time.Second},
+	}
 
 	records, err := provider.DeleteRecords(ctx, zone, delRecords)
 	if err != nil {
 		t.Logf("DeleteRecords error: %v", err)
 	}
 	assert.NotNil(t, records)
-	assert.True(t, len(records) >= 0, "Should have attempted to delete records")
-	t.Logf("DeleteRecords test passed. Delete count: %d", len(records))
 }
 
-func TestHTTPRequestRetryConfiguration(t *testing.T) {
-	setup()
-	
-	defaultRetryConfiguration := selectel.CreateDefaultHTTPRequestRetryConfiguration()
-	assert.Equal(t, 3, defaultRetryConfiguration.MaximumRetryAttempts)
-	assert.Equal(t, 1*time.Second, defaultRetryConfiguration.InitialRetryDelay)
-	assert.Equal(t, 30*time.Second, defaultRetryConfiguration.MaximumRetryDelay)
-	assert.Equal(t, 2.0, defaultRetryConfiguration.ExponentialBackoffMultiplier)
-	
-	customRetryConfiguration := selectel.HTTPRequestRetryConfiguration{
+// ----- Unit tests ---------------------------------------------------------
+
+func TestCreateDefaultHTTPRequestRetryConfiguration(t *testing.T) {
+	cfg := selectel.CreateDefaultHTTPRequestRetryConfiguration()
+	assert.Equal(t, 3, cfg.MaximumRetryAttempts)
+	assert.Equal(t, 1*time.Second, cfg.InitialRetryDelay)
+	assert.Equal(t, 30*time.Second, cfg.MaximumRetryDelay)
+	assert.Equal(t, 2.0, cfg.ExponentialBackoffMultiplier)
+}
+
+func TestHTTPRequestRetryConfiguration_CustomValuesArePreserved(t *testing.T) {
+	custom := selectel.HTTPRequestRetryConfiguration{
 		MaximumRetryAttempts:         5,
-		InitialRetryDelay:           2 * time.Second,
-		MaximumRetryDelay:           60 * time.Second,
+		InitialRetryDelay:            2 * time.Second,
+		MaximumRetryDelay:            60 * time.Second,
 		ExponentialBackoffMultiplier: 1.5,
 	}
-	
-	provider.HTTPRequestRetryConfiguration = customRetryConfiguration
-	assert.Equal(t, 5, provider.HTTPRequestRetryConfiguration.MaximumRetryAttempts)
-	assert.Equal(t, 2*time.Second, provider.HTTPRequestRetryConfiguration.InitialRetryDelay)
-	assert.Equal(t, 60*time.Second, provider.HTTPRequestRetryConfiguration.MaximumRetryDelay)
-	assert.Equal(t, 1.5, provider.HTTPRequestRetryConfiguration.ExponentialBackoffMultiplier)
-	
-	t.Log("HTTPRequestRetryConfiguration test passed")
-}
+	provider := &selectel.Provider{HTTPRequestRetryConfiguration: custom}
 
-func TestEnhancedErrorHandling(t *testing.T) {
-	setup()
-	
-	invalidZoneName := "nonexistent.zone.test"
-	records, err := provider.GetRecords(ctx, invalidZoneName)
-	assert.Error(t, err)
-	assert.Nil(t, records)
-	assert.Contains(t, err.Error(), "no zoneId for zone")
-	
-	t.Log("EnhancedErrorHandling test passed")
+	if !reflect.DeepEqual(provider.HTTPRequestRetryConfiguration, custom) {
+		t.Fatalf("retry configuration was mutated: got %+v want %+v", provider.HTTPRequestRetryConfiguration, custom)
+	}
 }

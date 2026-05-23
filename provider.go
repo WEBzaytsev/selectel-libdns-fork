@@ -10,18 +10,40 @@ import (
 	"github.com/libdns/libdns"
 )
 
-// Provider facilitates DNS record manipulation with <TODO: PROVIDER NAME>.
+// Provider facilitates DNS record manipulation with Selectel DNS v2 API.
 type Provider struct {
+	// User is the Selectel service user login (required).
 	User string `json:"user,omitempty"`
+	// Password is the Selectel service user password (required).
 	Password string `json:"password,omitempty"`
+	// AccountId is the Selectel account ID (required).
 	AccountId string `json:"account_id,omitempty"`
+	// ProjectName is the Selectel project name (required).
 	ProjectName string `json:"project_name,omitempty"`
+
+	// EnableDebugLogging enables verbose DEBUG-level messages on the
+	// OperationLogger. INFO and ERROR messages are emitted regardless
+	// of this flag as long as OperationLogger is set.
 	EnableDebugLogging bool `json:"enable_debug_logging,omitempty"`
-	KeystoneToken string
-	ZonesCache map[string]string
+
+	// HTTPRequestRetryConfiguration controls the retry behaviour for
+	// transient HTTP failures. A zero value enables sensible defaults
+	// (see CreateDefaultHTTPRequestRetryConfiguration).
 	HTTPRequestRetryConfiguration HTTPRequestRetryConfiguration
+
+	// OperationLogger receives diagnostic messages. When nil and
+	// EnableDebugLogging is true, a logger writing to os.Stderr is
+	// created automatically. When nil and EnableDebugLogging is false,
+	// the provider is completely silent.
 	OperationLogger *log.Logger
-	once sync.Once
+
+	// KeystoneToken holds the active Selectel Keystone token. It is
+	// populated lazily on the first API call.
+	KeystoneToken string
+	// ZonesCache caches resolved zone IDs by zone name.
+	ZonesCache map[string]string
+
+	once  sync.Once
 	mutex sync.Mutex
 }
 
