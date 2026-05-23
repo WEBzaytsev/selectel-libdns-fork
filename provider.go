@@ -4,6 +4,7 @@ package selectel
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	"github.com/libdns/libdns"
@@ -15,8 +16,11 @@ type Provider struct {
 	Password string `json:"password,omitempty"`
 	AccountId string `json:"account_id,omitempty"`
 	ProjectName string `json:"project_name,omitempty"`
+	EnableDebugLogging bool `json:"enable_debug_logging,omitempty"`
 	KeystoneToken string
 	ZonesCache map[string]string
+	HTTPRequestRetryConfiguration HTTPRequestRetryConfiguration
+	OperationLogger *log.Logger
 	once sync.Once
 	mutex sync.Mutex
 }

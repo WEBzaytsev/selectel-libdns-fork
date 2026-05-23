@@ -1,11 +1,31 @@
 package selectel
 
+import (
+	"time"
+)
+
 const (
 	cApiBaseUrl = "https://api.selectel.ru/domains/v2"
 	cGetKeystoneTokenTemplate = "{\"auth\":{\"identity\":{\"methods\":[\"password\"],\"password\":{\"user\":{\"name\":\"{{.User}}\",\"domain\":{\"name\":\"{{.AccountId}}\"},\"password\":\"{{.Password}}\"}}},\"scope\":{\"project\":{\"name\":\"{{.ProjectName}}\",\"domain\":{\"name\":\"{{.AccountId}}\"}}}}}"
 	cTokensUrl = "https://cloud.api.selcloud.ru/identity/v3/auth/tokens"
 	cKeystoneTokenHeader = "X-Subject-Token"
 )
+
+type HTTPRequestRetryConfiguration struct {
+	MaximumRetryAttempts         int
+	InitialRetryDelay           time.Duration
+	MaximumRetryDelay           time.Duration
+	ExponentialBackoffMultiplier float64
+}
+
+func CreateDefaultHTTPRequestRetryConfiguration() HTTPRequestRetryConfiguration {
+	return HTTPRequestRetryConfiguration{
+		MaximumRetryAttempts:         3,
+		InitialRetryDelay:           1 * time.Second,
+		MaximumRetryDelay:           30 * time.Second,
+		ExponentialBackoffMultiplier: 2.0,
+	}
+}
 
 var (
 	httpMethods = httpMethod{
@@ -48,7 +68,7 @@ type Zone struct {
 	Name string `json:"name"`
 	
 	// zoneId by selectel
-	ID_ string `json:"id"`
+	ID string `json:"id"`
 }
 
 type Recordset struct {
@@ -59,11 +79,12 @@ type Record struct {
 	ID		string `json:"id,omitempty"`
 	Type	string `json:"type"`
 	Name	string `json:"name"`
-	Value	[]RValue `json:"records"`
+	Records	[]RecordItem `json:"records"`
 	TTL		int `json:"ttl"`
 }
 
-type RValue struct {
-	Value string `json:"content"`
+type RecordItem struct {
+	Content  string `json:"content"`
+	Disabled bool   `json:"disabled"`
 }
 
